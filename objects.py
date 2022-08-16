@@ -2,7 +2,7 @@ from enum import Enum
 
 
 class Binding:
-    def __init__(self, device_name, voice, channel, address, actions=[], value=0):
+    def __init__(self, device_name, voice, channel, address, actions='', value=0):
         self.device_name = device_name    # E.g. Akai APC 40 0
         self.voice = voice                # Usually note_on, note_off or control_change
         self.channel = int(channel)
@@ -25,7 +25,7 @@ class Binding:
             bind.voice,
             str(bind.channel),
             str(bind.address),
-            ', '.join(map(Action.toString, bind.actions))
+            bind.actions
         ]
 
     @staticmethod
@@ -35,29 +35,29 @@ class Binding:
             voice=d['voice'],
             channel=d['channel'],
             address=d['address'],
-            actions=list(map(Action.fromDict, d['actions']))
+            actions=d['actions']
         )
 
 
-class Action:
-    def __init__(self,
-                 action_message='',
-                 osc_values={'low': 0, 'high': 1}):
-        self.action_message = action_message
-        self.osc_values = osc_values
+# class Action:
+#     def __init__(self,
+#                  action_message='',
+#                  osc_values={'low': 0, 'high': 1}):
+#         self.action_message = action_message
+#         self.osc_values = osc_values
 
-    @staticmethod
-    def toString(action):
-        return action.action_message
+#     @staticmethod
+#     def toString(action):
+#         return action.action_message
 
-    @staticmethod
-    def toDict(action):
-        return {'message': action.action_message, 'values': action.osc_values}
+#     @staticmethod
+#     def toDict(action):
+#         return {'message': action.action_message, 'values': action.osc_values}
 
-    @staticmethod
-    def fromDict(d):
-        print(d['message'])
-        return Action(
-            action_message=d['message'],
-            osc_values=d['values']
-        )
+#     @staticmethod
+#     def fromDict(d):
+#         print(d['message'])
+#         return Action(
+#             action_message=d['message'],
+#             osc_values=d['values']
+#         )
