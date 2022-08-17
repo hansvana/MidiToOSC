@@ -7,6 +7,7 @@ from copy import deepcopy
 import json
 
 from objects import Binding
+from utils import map_float
 
 midi_devices_detected = []
 midi_devices_connected = []
@@ -50,7 +51,9 @@ def config_append_binding(binding):
         'voice': binding.voice,
         'channel': str(binding.channel),
         'address': str(binding.address),
-        'actions': binding.actions
+        'actions': binding.actions,
+        'send_note_off': binding.send_note_off,
+        'is_encoder': binding.is_encoder
     })
     save_config()
 
@@ -59,6 +62,20 @@ def config_update_binding(binding):
     for cb in config['bindings']:
         if cb['device'] == binding.device_name and cb['voice'] == binding.voice and int(cb['channel']) == binding.channel and int(cb['address']) == binding.address:
             cb['actions'] = binding.actions
+            cb['send_note_off'] = binding.send_note_off
+            cb['is_encoder'] = binding.is_encoder
+    save_config()
+
+
+def config_remove_binding(binding):
+    config['bindings'] = list(filter(
+        lambda cb:
+            cb['device'] != binding.device_name or
+            cb['voice'] != binding.voice or
+            cb['channel'] != str(binding.channel) or
+            cb['address'] != str(binding.address),
+        config['bindings']
+    ))
     save_config()
 
 
@@ -73,8 +90,8 @@ sg.theme('DarkBrown')
 # Main window
 
 binding_table_headings = ['Device', 'Type',
-                          'Channel', 'Note/Ctrl', 'Actions']
-binding_table_cols_width = [16, 12, 8, 8, 16]
+                          'Channel', 'Note/Ctrl', 'Actions', 'Send note off', 'Is encoder']
+binding_table_cols_width = [16, 12, 8, 8, 16, 10, 10]
 
 
 def make_mainwindow():
@@ -109,9 +126,9 @@ def make_mainwindow():
                          enable_click_events=True,
                          select_mode=sg.TABLE_SELECT_MODE_BROWSE
                          )],
-               [sg.Button('New Binding')],
+               [sg.Button('New Binding'), sg.Button('Delete Binding')],
                [sg.Multiline('',
-                             size=(72, 5),
+                             size=(77, 5),
                              key='_statusbar_',
                              autoscroll=True
                              )]
@@ -155,6 +172,21 @@ mainwindow['_devicelist_'].widget.configure(activestyle='none')
 def log(text):
     mainwindow['_statusbar_'].update(str(text) + '\n', append=True)
 
+
+# -----------------------------------------------------------
+# OSC Stuff
+
+osc_client = udp_client.SimpleUDPClient(
+    config.get('osc_ip'),
+    int(config.get('osc_port'))
+)
+
+
+def osc_send(address, value):
+    value = round(map_float(value, 0, 127, 0, 1), 3)
+    log(address + " " + str(value))
+    osc_client.send_message(address, value)
+
 # -----------------------------------------------------------
 # MIDI Stuff
 
@@ -193,8 +225,7 @@ def midi_read_inputs():
                     voice=msg.type,
                     channel=msg.channel,
                     address=msg.control if msg.type == 'control_change' else msg.note,
-                    value=msg.value if msg.type == 'control_change' else round(
-                        msg.velocity, 0),
+                    value=msg.value if msg.type == 'control_change' else 127 if msg.type == 'note_on' else 0,
                 )
                 midi_handle_message(bind)
 
@@ -205,10 +236,38 @@ def midi_handle_message(bind):
         last_midi_input = bind
         midiwindow.write_event_value('Exit', None)
         save_binding()
+    else:
+        midi_execute_if_exists(bind)
+
+
+def midi_execute_if_exists(incoming_bind):
+    global midi_bindings
+    for bind in midi_bindings:
+        if incoming_bind.voice == 'note_off' and bind.send_note_off == False:
+            continue
+        if bind.equals(incoming_bind):
+            for action in bind.actions.split(','):
+                value = incoming_bind.value
+                if bind.is_encoder:
+                    if incoming_bind.value > bind.value or incoming_bind.value == 127:
+                        value = 127
+                    else:
+                        value = 0
+                interpret_action(action.strip(), value)
+            bind.value = incoming_bind.value
+
+
+def interpret_action(action, value):
+    if len(action) <= 0:
+        return
+
+    if action[0] == '/':
+        osc_send(action, value)
+    # TODO: HANDLE SEND KEYPRESSES INSTEAD OF OSC
 
 
 def save_binding():
-    global last_midi_input, midi_bindings
+    global last_midi_input, midi_bindings, last_clicked_cell
     if last_midi_input == None:
         return
 
@@ -234,6 +293,7 @@ def save_binding():
 
     mainwindow['_bindingtable_'].update(select_rows=[rowNum])
     mainwindow['_bindingtable_'].Widget.see(rowNum+1)
+    last_clicked_cell = (rowNum, 0)
 
 
 def update_binding(index):
@@ -242,6 +302,9 @@ def update_binding(index):
     row = index[0]
     column = index[1]
 
+    if row == None or row > len(midi_bindings):
+        return
+
     if column == 4:
         # update Action
         actionstring = midi_bindings[row].actions
@@ -249,11 +312,56 @@ def update_binding(index):
         actionwindow['_actionstring_'].Widget.focus()
         actionwindow['_actionstring_'].Widget.select_range(0, 'end')
         actionwindow['_actionstring_'].Widget.icursor('end')
+    if column == 5:
+        answer = sg.popup_yes_no(
+            'Should note off also be sent?\nThis only works for notes, not for controllers')
+        update_send_noteoff(row, answer == 'Yes')
+    if column == 6:
+        answer = sg.popup_yes_no(
+            'Should this controller behave like an encoder?\n' +
+            'This may only makes sense for rotary knobs.\n' +
+            'If the hardware knob is already programmed as an encoder, you may want this to be False.'
+        )
+        update_is_encoder(row, answer == 'Yes')
+
+
+def delete_binding(index):
+    global midi_bindings, last_clicked_cell
+    if index == -1:
+        return
+
+    config_remove_binding(midi_bindings[index])
+    del midi_bindings[index]
+    mainwindow['_bindingtable_'].update(
+        values=map(Binding.toArray, midi_bindings))
+
+    if len(midi_bindings) > 0:
+        mainwindow['_bindingtable_'].update(
+            select_rows=[index if index < len(midi_bindings)-1 else len(midi_bindings)-1])
+        last_clicked_cell = (len(midi_bindings)-1, 0)
+    else:
+        last_clicked_cell = (-1, -1)
 
 
 def update_action(index, value):
     bind = midi_bindings[index]
     bind.actions = value
+    config_update_binding(bind)
+    mainwindow['_bindingtable_'].update(
+        values=map(Binding.toArray, midi_bindings))
+
+
+def update_send_noteoff(index, value):
+    bind = midi_bindings[index]
+    bind.send_note_off = value
+    config_update_binding(bind)
+    mainwindow['_bindingtable_'].update(
+        values=map(Binding.toArray, midi_bindings))
+
+
+def update_is_encoder(index, value):
+    bind = midi_bindings[index]
+    bind.is_encoder = value
     config_update_binding(bind)
     mainwindow['_bindingtable_'].update(
         values=map(Binding.toArray, midi_bindings))
@@ -295,6 +403,8 @@ while True:
             midiwindow = make_midiwindow()
         else:
             midiwindow.force_focus()
+    elif event == 'Delete Binding':
+        delete_binding(last_clicked_cell[0])
     elif event[0] == '_bindingtable_':
         last_clicked_cell = event[2]
     elif event == '_bindingtable_+-double click-':

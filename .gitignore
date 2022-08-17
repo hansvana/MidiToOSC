@@ -161,6 +161,7 @@ cython_debug/
 
 *.backup
 *.csv
+*.old
 /Include
 /Scripts
 /share
