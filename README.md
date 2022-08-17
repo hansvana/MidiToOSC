@@ -2,7 +2,7 @@
 
 Written by Hans van Arken
 
-![a screenshot of the software](screenshot.png)
+![a screenshot of the software](screenshotv003.png)
 
 ### Feature roadmap
 
