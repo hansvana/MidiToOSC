@@ -6,7 +6,7 @@ Written by Hans van Arken
 
 ### Feature roadmap
 
-- Build to executable
+- Build for Mac (If you would like to contribute by building and testing for OSX, that would be great!)
 - Ability to send keystrokes as well as OSC
 - Ability to select multiple bindings in table and make batch changes
 
